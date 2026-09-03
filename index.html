@@ -618,14 +618,48 @@
 
 <a class="whatsapp-float" id="floatWaBtn" href="#" target="_blank" rel="noopener">💬 WhatsApp</a>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script>
 /* =====================================================================
-   CONFIGURACIÓN — datos de contacto
+   CONFIGURACIÓN — datos de contacto y planilla de publicaciones
+
+   CÓMO CONECTAR TU GOOGLE SHEET (una sola vez):
+   1) Creá una Google Sheet nueva con 3 hojas (pestañas) llamadas
+      exactamente: Comunidad | Marketplace | Eventos
+
+   2) Primera fila de cada hoja = encabezados, EXACTOS como sigue:
+
+      Hoja "Comunidad":   aprobado | categoria | plataforma | url | embed_id | titulo | cuenta
+        - categoria: spot / marca / clip
+        - plataforma: youtube / tiktok / instagram / link
+        - embed_id: solo si plataforma = youtube (el ID del video)
+
+      Hoja "Marketplace": aprobado | nombre | precio | zona | descripcion | review_url
+
+      Hoja "Eventos":     aprobado | fecha | titulo | lugar | descripcion | info_url
+
+      En la columna "aprobado" poné TRUE en las filas que querés que
+      se vean en la web, y FALSE (o dejala vacía) en las que todavía
+      no querés publicar. Así seguís teniendo el control total: nada
+      se muestra hasta que vos pongas TRUE.
+
+   3) En cada hoja: Archivo > Compartir > Publicar en la web >
+      elegí esa hoja puntual (no "todo el documento") > formato CSV >
+      Publicar. Repetí para las 3 hojas — cada una te da un link distinto.
+
+   4) Pegá los 3 links dentro de "sheets" acá abajo, reemplazando los
+      textos PEGAR_LINK_...  Guardá el archivo y listo: de ahí en más
+      publicás todo desde la planilla, sin tocar el código nunca más.
    ===================================================================== */
 const CONFIG = {
   whatsapp: '5491161366070',          // número sin + ni espacios, con código de país y área
   email: 'ariasu155@gmail.com',
-  location: 'Monte Chingolo, Lanús, Buenos Aires'
+  location: 'Monte Chingolo, Lanús, Buenos Aires',
+  sheets: {
+    community: 'PEGAR_LINK_CSV_COMUNIDAD_ACA',
+    market: 'PEGAR_LINK_CSV_MARKETPLACE_ACA',
+    events: 'PEGAR_LINK_CSV_EVENTOS_ACA'
+  }
 };
 
 /* =====================================================================
@@ -648,7 +682,7 @@ const CONFIG = {
      handle: '@usuario'
    }
    ===================================================================== */
-const COMMUNITY_ITEMS = [
+let COMMUNITY_ITEMS = [
   {
     category: 'clip',
     platform: 'instagram',
@@ -677,7 +711,7 @@ const COMMUNITY_ITEMS = [
      reviewUrl: 'https://...'   // opcional, link a un video/review
    }
    ===================================================================== */
-const MARKET_ITEMS = [
+let MARKET_ITEMS = [
   // todavía sin productos publicados
 ];
 
@@ -685,7 +719,7 @@ const MARKET_ITEMS = [
    EVENTOS
    { date: '14 SEP', title: 'Nombre del evento', location: 'Lugar', desc: 'Detalle corto', infoUrl: 'https://...' }
    ===================================================================== */
-const EVENTS = [
+let EVENTS = [
   {
     date: 'Sáb 5/09 · 13 a 17 hs',
     title: 'Día de fingerboard en Perú Beach',
@@ -696,6 +730,78 @@ const EVENTS = [
 ];
 
 /* ===================================================================== */
+
+/* ---------- carga de contenido desde Google Sheets ---------- */
+async function fetchSheetRows(url){
+  if(!url || url.indexOf('PEGAR_LINK_') === 0){
+    return null; // esa hoja todavía no fue conectada — se usa el respaldo
+  }
+  try{
+    const res = await fetch(url);
+    if(!res.ok) throw new Error('status ' + res.status);
+    const text = await res.text();
+    const parsed = Papa.parse(text, { header:true, skipEmptyLines:true });
+    return parsed.data;
+  }catch(err){
+    console.warn('No se pudo leer la planilla, se muestra el respaldo:', err);
+    return null;
+  }
+}
+
+function isApproved(val){
+  if(!val) return false;
+  const v = String(val).trim().toLowerCase();
+  return v === 'true' || v === 'si' || v === 'sí' || v === 'x' || v === '1';
+}
+
+async function loadCommunityFromSheet(){
+  const rows = await fetchSheetRows(CONFIG.sheets.community);
+  if(!rows) return;
+  const items = rows
+    .filter(r => isApproved(r.aprobado))
+    .map(r => ({
+      category: (r.categoria || '').trim().toLowerCase(),
+      platform: (r.plataforma || '').trim().toLowerCase(),
+      embedId: (r.embed_id || '').trim(),
+      url: (r.url || '').trim(),
+      title: (r.titulo || '').trim(),
+      handle: (r.cuenta || '').trim()
+    }))
+    .filter(i => i.category && i.platform);
+  if(items.length) COMMUNITY_ITEMS = items;
+}
+
+async function loadMarketFromSheet(){
+  const rows = await fetchSheetRows(CONFIG.sheets.market);
+  if(!rows) return;
+  const items = rows
+    .filter(r => isApproved(r.aprobado))
+    .map(r => ({
+      name: (r.nombre || '').trim(),
+      price: (r.precio || '').trim(),
+      zone: (r.zona || '').trim(),
+      desc: (r.descripcion || '').trim(),
+      reviewUrl: (r.review_url || '').trim()
+    }))
+    .filter(i => i.name);
+  if(items.length) MARKET_ITEMS = items;
+}
+
+async function loadEventsFromSheet(){
+  const rows = await fetchSheetRows(CONFIG.sheets.events);
+  if(!rows) return;
+  const items = rows
+    .filter(r => isApproved(r.aprobado))
+    .map(r => ({
+      date: (r.fecha || '').trim(),
+      title: (r.titulo || '').trim(),
+      location: (r.lugar || '').trim(),
+      desc: (r.descripcion || '').trim(),
+      infoUrl: (r.info_url || '').trim()
+    }))
+    .filter(i => i.title);
+  if(items.length) EVENTS = items;
+}
 
 function waLink(msg){
   return `https://wa.me/${CONFIG.whatsapp}?text=${encodeURIComponent(msg)}`;
@@ -727,12 +833,38 @@ mobileMenu.querySelectorAll('a').forEach(a => a.addEventListener('click', () => 
 const communityGrid = document.getElementById('communityGrid');
 let embedScriptsLoaded = { instagram:false, tiktok:false };
 
-function loadScriptOnce(src, key){
-  if(embedScriptsLoaded[key]) return;
+function loadScriptOnce(src, key, onload){
+  if(embedScriptsLoaded[key]){
+    if(onload) onload();
+    return;
+  }
   embedScriptsLoaded[key] = true;
   const s = document.createElement('script');
   s.src = src; s.async = true;
+  if(onload) s.addEventListener('load', onload);
   document.body.appendChild(s);
+}
+
+// TikTok no expone una función pública para "reprocesar" el DOM, así que
+// para que un video agregado después también se reproduzca, se recarga
+// el script (con un parámetro único para evitar la caché del navegador).
+function reloadTiktokEmbed(){
+  const prev = document.querySelector('script[data-embed="tiktok"]');
+  if(prev) prev.remove();
+  const s = document.createElement('script');
+  s.src = 'https://www.tiktok.com/embed.js?_=' + Date.now();
+  s.async = true;
+  s.dataset.embed = 'tiktok';
+  document.body.appendChild(s);
+}
+
+// Instagram sí expone instgrm.Embeds.process() para reprocesar el DOM.
+function reprocessInstagramEmbeds(){
+  if(window.instgrm && window.instgrm.Embeds){
+    window.instgrm.Embeds.process();
+  } else {
+    loadScriptOnce('https://www.instagram.com/embed.js', 'instagram');
+  }
 }
 
 function categoryLabel(cat){
@@ -747,11 +879,9 @@ function buildEmbed(item){
   } else if(item.platform === 'instagram'){
     wrap.classList.add('is-portrait');
     wrap.innerHTML = `<blockquote class="instagram-media" data-instgrm-permalink="${item.url}" data-instgrm-version="14" style="width:100%; margin:0;"></blockquote>`;
-    loadScriptOnce('https://www.instagram.com/embed.js', 'instagram');
   } else if(item.platform === 'tiktok'){
     wrap.classList.add('is-portrait');
     wrap.innerHTML = `<blockquote class="tiktok-embed" cite="${item.url}" style="max-width:100%; margin:0;"><section></section></blockquote>`;
-    loadScriptOnce('https://www.tiktok.com/embed.js', 'tiktok');
   } else {
     wrap.innerHTML = `<a href="${item.url}" target="_blank" rel="noopener" style="font-family:var(--ff-mono); font-size:13px; text-decoration:underline;">Ver enlace ↗</a>`;
   }
@@ -820,6 +950,10 @@ function renderCommunity(filter){
     <a href="${waLink(generalWaMsg)}" target="_blank" rel="noopener" class="btn btn-primary">Publicar ahora</a>
   `;
   communityGrid.appendChild(cta);
+
+  // reproducir los videos embebidos, incluidos los agregados dinámicamente
+  if(items.some(i => i.platform === 'instagram')) reprocessInstagramEmbeds();
+  if(items.some(i => i.platform === 'tiktok')) reloadTiktokEmbed();
 }
 
 document.querySelectorAll('#communityChips .chip').forEach(chip => {
@@ -829,8 +963,6 @@ document.querySelectorAll('#communityChips .chip').forEach(chip => {
     renderCommunity(chip.dataset.filter);
   });
 });
-
-renderCommunity('all');
 
 /* ---------- render marketplace ---------- */
 const productGrid = document.getElementById('productGrid');
@@ -881,7 +1013,6 @@ function renderMarket(){
   `;
   productGrid.appendChild(cta);
 }
-renderMarket();
 
 /* ---------- render eventos ---------- */
 const eventList = document.getElementById('eventList');
@@ -914,7 +1045,19 @@ function renderEvents(){
     });
   }
 }
-renderEvents();
+
+/* ---------- arranque: carga la planilla y después dibuja todo ---------- */
+async function init(){
+  await Promise.all([
+    loadCommunityFromSheet(),
+    loadMarketFromSheet(),
+    loadEventsFromSheet()
+  ]);
+  renderCommunity('all');
+  renderMarket();
+  renderEvents();
+}
+init();
 </script>
 </body>
 </html>
