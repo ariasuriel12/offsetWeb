@@ -376,6 +376,38 @@
     display:flex; flex-direction:column;
     box-shadow:var(--shadow);
   }
+  .product-photo{
+    position:relative; display:block; width:100%; padding:0; margin:0;
+    aspect-ratio:4/3; border:0; border-bottom:2px solid var(--ink);
+    background:var(--paper-2); overflow:hidden; cursor:zoom-in;
+  }
+  .product-photo img{width:100%; height:100%; object-fit:cover; transition:transform .25s ease;}
+  .product-photo:hover img{transform:scale(1.04);}
+  .product-photo.is-empty{
+    cursor:default; display:flex; align-items:center; justify-content:center;
+    font-family:var(--ff-mono); font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:#8A877C;
+  }
+  .photo-count{
+    position:absolute; right:8px; bottom:8px;
+    font-family:var(--ff-mono); font-size:11px; font-weight:700;
+    background:var(--ink); color:var(--hazard); padding:3px 7px;
+  }
+  .lightbox{
+    position:fixed; inset:0; z-index:100;
+    background:rgba(11,11,10,.92);
+    display:none; align-items:center; justify-content:center; padding:24px;
+  }
+  .lightbox.open{display:flex;}
+  .lightbox img{max-width:100%; max-height:85vh; border:3px solid var(--white); background:var(--ink);}
+  .lightbox button{
+    position:absolute; font-family:var(--ff-mono); font-size:22px; line-height:1;
+    width:44px; height:44px; background:var(--hazard); color:var(--ink);
+    border:2px solid var(--ink); cursor:pointer;
+  }
+  .lightbox .lb-close{top:16px; right:16px;}
+  .lightbox .lb-prev{left:16px; top:50%; transform:translateY(-50%);}
+  .lightbox .lb-next{right:16px; top:50%; transform:translateY(-50%);}
+  .lightbox .lb-prev[hidden], .lightbox .lb-next[hidden]{display:none;}
   .product-top{
     padding:16px; border-bottom:2px solid var(--ink);
     display:flex; justify-content:space-between; gap:10px; align-items:flex-start;
@@ -741,6 +773,13 @@
   </div>
 </footer>
 
+<div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="Foto del producto">
+  <button class="lb-close" type="button" aria-label="Cerrar">×</button>
+  <button class="lb-prev" type="button" aria-label="Foto anterior">‹</button>
+  <img id="lbImg" alt="">
+  <button class="lb-next" type="button" aria-label="Foto siguiente">›</button>
+</div>
+
 <a class="whatsapp-float" id="floatWaBtn" href="#" target="_blank" rel="noopener">💬 WhatsApp</a>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
@@ -759,7 +798,7 @@
         - plataforma: youtube / tiktok / instagram / link
         - embed_id: solo si plataforma = youtube (el ID del video)
 
-      Hoja "Marketplace": aprobado | nombre | precio | zona | descripcion | review_url
+      Hoja "Marketplace": aprobado | nombre | precio | zona | descripcion | review_url | foto_url
 
       Hoja "Eventos":     aprobado | fecha | titulo | lugar | descripcion | info_url
 
@@ -833,7 +872,8 @@ let COMMUNITY_ITEMS = [
      price: 'AR$ 15.000',
      zone: 'Lanús / envío a coordinar',
      desc: 'Descripción corta del producto y su estado.',
-     reviewUrl: 'https://...'   // opcional, link a un video/review
+     reviewUrl: 'https://...',  // opcional, link a un video/review
+     photos: ['https://.../foto.jpg']  // opcional, links a fotos
    }
    ===================================================================== */
 let MARKET_ITEMS = [
@@ -920,6 +960,20 @@ async function loadCommunityFromSheet(){
   if(items.length) COMMUNITY_ITEMS = items;
 }
 
+/* Fotos: en la columna foto_url va un link a la imagen. Podés poner varias
+   separadas por espacio o coma (la primera es la portada). Acepta links
+   directos (.jpg/.png/.webp) y links de "Compartir" de Google Drive. */
+function normalizePhotoUrl(raw){
+  const u = (raw || '').trim();
+  if(!/^https?:\/\//i.test(u)) return '';
+  const m = u.match(/drive\.google\.com\/file\/d\/([\w-]+)/) || u.match(/drive\.google\.com\/(?:open|uc)\?[^#]*id=([\w-]+)/);
+  if(m) return 'https://drive.google.com/thumbnail?id=' + m[1] + '&sz=w1200';
+  return u;
+}
+function parsePhotos(cell){
+  return String(cell || '').split(/[\s,]+/).map(normalizePhotoUrl).filter(Boolean);
+}
+
 async function loadMarketFromSheet(){
   const rows = await fetchSheetRows(CONFIG.sheets.market);
   if(!rows) return;
@@ -930,7 +984,8 @@ async function loadMarketFromSheet(){
       price: (r.precio || '').trim(),
       zone: (r.zona || '').trim(),
       desc: (r.descripcion || '').trim(),
-      reviewUrl: (r.review_url || '').trim()
+      reviewUrl: (r.review_url || '').trim(),
+      photos: parsePhotos(r.foto_url)
     }))
     .filter(i => i.name);
   if(items.length) MARKET_ITEMS = items;
@@ -1116,6 +1171,64 @@ document.querySelectorAll('#communityChips .chip').forEach(chip => {
 /* ---------- render marketplace ---------- */
 const productGrid = document.getElementById('productGrid');
 
+/* ---------- fotos de productos + visor ---------- */
+const lightbox = document.getElementById('lightbox');
+const lbImg = document.getElementById('lbImg');
+const lbPrev = lightbox.querySelector('.lb-prev');
+const lbNext = lightbox.querySelector('.lb-next');
+let lbPhotos = [], lbIndex = 0;
+
+function showLightbox(){
+  lbImg.src = lbPhotos[lbIndex];
+  const multi = lbPhotos.length > 1;
+  lbPrev.hidden = !multi; lbNext.hidden = !multi;
+}
+function openLightbox(photos, i, alt){
+  lbPhotos = photos; lbIndex = i; lbImg.alt = alt || '';
+  showLightbox();
+  lightbox.classList.add('open');
+}
+function closeLightbox(){ lightbox.classList.remove('open'); lbImg.src = ''; }
+lightbox.querySelector('.lb-close').addEventListener('click', closeLightbox);
+lbPrev.addEventListener('click', e => { e.stopPropagation(); lbIndex = (lbIndex - 1 + lbPhotos.length) % lbPhotos.length; showLightbox(); });
+lbNext.addEventListener('click', e => { e.stopPropagation(); lbIndex = (lbIndex + 1) % lbPhotos.length; showLightbox(); });
+lightbox.addEventListener('click', e => { if(e.target === lightbox) closeLightbox(); });
+document.addEventListener('keydown', e => {
+  if(!lightbox.classList.contains('open')) return;
+  if(e.key === 'Escape') closeLightbox();
+  if(e.key === 'ArrowLeft' && lbPhotos.length > 1) lbPrev.click();
+  if(e.key === 'ArrowRight' && lbPhotos.length > 1) lbNext.click();
+});
+
+function buildProductPhoto(p){
+  const photos = p.photos || [];
+  const empty = () => {
+    const d = document.createElement('div');
+    d.className = 'product-photo is-empty';
+    d.textContent = 'Sin foto';
+    return d;
+  };
+  if(!photos.length) return empty();
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'product-photo';
+  btn.setAttribute('aria-label', 'Ver foto de ' + p.name);
+  const img = document.createElement('img');
+  img.src = photos[0]; img.alt = p.name; img.loading = 'lazy';
+  img.referrerPolicy = 'no-referrer';
+  img.addEventListener('error', () => btn.replaceWith(empty()));
+  btn.appendChild(img);
+  if(photos.length > 1){
+    const c = document.createElement('span');
+    c.className = 'photo-count';
+    c.textContent = '1/' + photos.length;
+    btn.appendChild(c);
+  }
+  btn.addEventListener('click', () => openLightbox(photos, 0, p.name));
+  return btn;
+}
+
 function renderMarket(){
   productGrid.innerHTML = '';
 
@@ -1132,7 +1245,9 @@ function renderMarket(){
     MARKET_ITEMS.forEach(p => {
       const card = document.createElement('article');
       card.className = 'product';
-      card.innerHTML = `
+      card.appendChild(buildProductPhoto(p));
+      const info = document.createElement('div');
+      info.innerHTML = `
         <div class="product-top">
           <h3>${p.name}</h3>
           ${p.price ? `<span class="price-tag">${p.price}</span>` : ''}
@@ -1146,6 +1261,8 @@ function renderMarket(){
           <a class="btn btn-dark" target="_blank" rel="noopener" href="${waLink('Hola! Te consulto por "' + p.name + '" que vi en Offset Fingerboards.')}">Consultar por WhatsApp</a>
         </div>
       `;
+      info.style.display = 'contents';
+      while(info.firstChild) card.appendChild(info.firstChild);
       productGrid.appendChild(card);
     });
   }
@@ -1156,7 +1273,7 @@ function renderMarket(){
   cta.innerHTML = `
     <div>
       <h3>¿Tenés algo para vender?</h3>
-      <p>Mandanos nombre, precio, zona y fotos por WhatsApp y lo publicamos.</p>
+      <p>Mandanos nombre, precio, zona y fotos por WhatsApp y lo publicamos con tus fotos.</p>
     </div>
     <a href="${waLink('Hola! Quiero publicar un producto en el marketplace de Offset Fingerboards.')}" target="_blank" rel="noopener" class="btn btn-primary">Publicar producto</a>
   `;
