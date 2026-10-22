@@ -803,7 +803,6 @@
 
 <a class="whatsapp-float" id="floatWaBtn" href="#" target="_blank" rel="noopener">💬 WhatsApp</a>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script>
 /* =====================================================================
    CONFIGURACIÓN — datos de contacto y planilla de publicaciones
@@ -952,6 +951,35 @@ const TRICKS = {
 /* ===================================================================== */
 
 /* ---------- carga de contenido desde Google Sheets ---------- */
+/* Lector de CSV propio (sin librerías externas): soporta comillas, comas y saltos de línea dentro de una celda */
+function parseCsv(text){
+  const rows = []; let row = [], cur = '', inQ = false;
+  text = String(text).replace(/^\uFEFF/, '');
+  for(let i = 0; i < text.length; i++){
+    const c = text[i];
+    if(inQ){
+      if(c === '"'){ if(text[i+1] === '"'){ cur += '"'; i++; } else inQ = false; }
+      else cur += c;
+    } else if(c === '"'){ inQ = true; }
+    else if(c === ','){ row.push(cur); cur = ''; }
+    else if(c === '\n' || c === '\r'){
+      if(c === '\r' && text[i+1] === '\n') i++;
+      row.push(cur); cur = '';
+      if(row.some(v => v.trim() !== '')) rows.push(row);
+      row = [];
+    } else cur += c;
+  }
+  row.push(cur);
+  if(row.some(v => v.trim() !== '')) rows.push(row);
+  if(!rows.length) return [];
+  const head = rows[0].map(h => h.trim().toLowerCase());
+  return rows.slice(1).map(r => {
+    const o = {};
+    head.forEach((h, i) => { o[h] = r[i] !== undefined ? r[i] : ''; });
+    return o;
+  });
+}
+
 async function fetchSheetRows(url){
   if(!url || url.indexOf('PEGAR_LINK_') === 0){
     return null; // esa hoja todavía no fue conectada — se usa el respaldo
@@ -960,8 +988,7 @@ async function fetchSheetRows(url){
     const res = await fetch(url);
     if(!res.ok) throw new Error('status ' + res.status);
     const text = await res.text();
-    const parsed = Papa.parse(text, { header:true, skipEmptyLines:true });
-    return parsed.data;
+    return parseCsv(text);
   }catch(err){
     console.warn('No se pudo leer la planilla, se muestra el respaldo:', err);
     return null;
